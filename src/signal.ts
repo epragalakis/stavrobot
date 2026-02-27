@@ -1,4 +1,4 @@
-export async function sendSignalMessage(recipient: string, message: string): Promise<void> {
+export async function sendSignalMessage(recipient: string, message: string): Promise<"ok" | "rate_limited"> {
   console.log("[stavrobot] sendSignalMessage called:", { recipient, messageLength: message.length });
 
   const response = await fetch("http://signal-bridge:8081/send", {
@@ -8,6 +8,11 @@ export async function sendSignalMessage(recipient: string, message: string): Pro
   });
 
   const responseText = await response.text();
+
+  if (response.status === 429) {
+    console.warn("[stavrobot] sendSignalMessage rate limited by bridge");
+    return "rate_limited";
+  }
 
   if (!response.ok) {
     let errorMessage = responseText;
@@ -35,4 +40,5 @@ export async function sendSignalMessage(recipient: string, message: string): Pro
   }
 
   console.log("[stavrobot] sendSignalMessage bridge response status:", response.status);
+  return "ok";
 }

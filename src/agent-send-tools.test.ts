@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { Pool, QueryResult } from "pg";
 import { createSendSignalMessageTool, createSendTelegramMessageTool } from "./agent.js";
 import type { Config } from "./config.js";
@@ -252,4 +252,35 @@ describe("send_telegram_message — recipient resolution", () => {
     expect(capturedQuery.text).toContain("enabled = true");
     expect(capturedQuery.text).toContain("service = 'telegram'");
   });
+});
+
+describe("send_signal_message — rate limiting", () => {
+  const originalFetch = global.fetch;
+
+  beforeEach(() => {
+    vi.mocked(resolveRecipient).mockResolvedValue({ identifier: "+1234567890" });
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it("returns rate limit instructions on 429 for text-only path", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      status: 429,
+      ok: false,
+      text: async () => JSON.stringify({ error: "rate_limited", retryAfterSeconds: 86400 }),
+    } as unknown as Response);
+
+    const pool = makeEmptyPool();
+    const config = makeConfig();
+    const tool = createSendSignalMessageTool(pool, config);
+    const result = await tool.execute("call-1", { recipient: "+1234567890", message: "hello" });
+    const text = makeText(result);
+    expect(text).toContain("rate limiting");
+    expect(text).toContain("signalcaptchas.org");
+    expect(text).toContain("run_python");
+    expect(text).toContain("signal-bridge:8081/challenge");
+  });
+
 });

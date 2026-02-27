@@ -22,6 +22,11 @@ from datetime import datetime
 
 from markdown_to_signal import convert_markdown
 
+# Stored when signal-cli returns a RATE_LIMIT_FAILURE, cleared after a successful
+# challenge submission. Only one pending challenge is tracked at a time.
+_rate_limit_token: str | None = None
+_rate_limit_retry_after_seconds: int | None = None
+
 
 def log(message: str) -> None:
     """Log a message to stdout with timestamp."""
@@ -126,13 +131,35 @@ def send_agent_request(message_text: str | None, source_number: str, audio: str 
     return response_json["response"]
 
 
+def _extract_rate_limit_info(error: dict) -> tuple[str, int] | None:
+    """Extract (token, retryAfterSeconds) from a signal-cli RATE_LIMIT_FAILURE error, or None."""
+    results = (
+        error.get("data", {})
+        .get("response", {})
+        .get("results", [])
+    )
+    if not isinstance(results, list):
+        return None
+    for result in results:
+        if isinstance(result, dict) and result.get("type") == "RATE_LIMIT_FAILURE":
+            token = result.get("token")
+            retry_after = result.get("retryAfterSeconds")
+            if isinstance(token, str) and isinstance(retry_after, int):
+                return token, retry_after
+    return None
+
+
 def send_signal_message(
     recipient: str,
     message_text: str,
     request_id: int,
     text_styles: list[str] | None = None,
-) -> bool:
-    """Send a message via signal-cli JSON-RPC. Returns True on success, False on failure."""
+) -> str:
+    """Send a message via signal-cli JSON-RPC.
+
+    Returns "ok", "rate_limited", or "error".
+    """
+    global _rate_limit_token, _rate_limit_retry_after_seconds
     params: dict = {
         "recipient": [recipient],
         "message": message_text,
@@ -154,14 +181,19 @@ def send_signal_message(
 
     if response.status != 200:
         log(f"Warning: signal-cli send returned status {response.status}")
-        return False
+        return "error"
 
     result = json.loads(response_data)
     if "error" in result:
         log(f"Warning: signal-cli send failed: {result['error']}")
-        return False
+        rate_limit_info = _extract_rate_limit_info(result["error"])
+        if rate_limit_info is not None:
+            _rate_limit_token, _rate_limit_retry_after_seconds = rate_limit_info
+            log(f"Rate limit detected, token stored, retryAfterSeconds={_rate_limit_retry_after_seconds}")
+            return "rate_limited"
+        return "error"
 
-    return True
+    return "ok"
 
 
 def send_signal_message_with_attachment(
@@ -169,8 +201,12 @@ def send_signal_message_with_attachment(
     message_text: str,
     request_id: int,
     attachment_paths: list[str],
-) -> bool:
-    """Send a message with file attachments via signal-cli JSON-RPC. Returns True on success, False on failure."""
+) -> str:
+    """Send a message with file attachments via signal-cli JSON-RPC.
+
+    Returns "ok", "rate_limited", or "error".
+    """
+    global _rate_limit_token, _rate_limit_retry_after_seconds
     params: dict = {
         "recipient": [recipient],
         "message": message_text,
@@ -191,14 +227,19 @@ def send_signal_message_with_attachment(
 
     if response.status != 200:
         log(f"Warning: signal-cli send returned status {response.status}")
-        return False
+        return "error"
 
     result = json.loads(response_data)
     if "error" in result:
         log(f"Warning: signal-cli send failed: {result['error']}")
-        return False
+        rate_limit_info = _extract_rate_limit_info(result["error"])
+        if rate_limit_info is not None:
+            _rate_limit_token, _rate_limit_retry_after_seconds = rate_limit_info
+            log(f"Rate limit detected, token stored, retryAfterSeconds={_rate_limit_retry_after_seconds}")
+            return "rate_limited"
+        return "error"
 
-    return True
+    return "ok"
 
 
 def make_send_handler(
@@ -209,10 +250,14 @@ def make_send_handler(
 
     class SendHandler(http.server.BaseHTTPRequestHandler):
         def do_POST(self) -> None:
-            if self.path != "/send":
+            if self.path == "/send":
+                self._handle_send()
+            elif self.path == "/challenge":
+                self._handle_challenge()
+            else:
                 self.send_error_response(404, "Not found")
-                return
 
+        def _handle_send(self) -> None:
             content_length = int(self.headers.get("Content-Length", 0))
             raw_body = self.rfile.read(content_length)
 
@@ -257,7 +302,7 @@ def make_send_handler(
                     with open(temp_path, "wb") as temp_file:
                         temp_file.write(attachment_bytes)
                     try:
-                        success = send_signal_message_with_attachment(
+                        send_result = send_signal_message_with_attachment(
                             recipient, message_text, request_counter.next(), [temp_path]
                         )
                     finally:
@@ -267,16 +312,94 @@ def make_send_handler(
                             log(f"Warning: failed to delete temp directory {temp_dir}: {error}")
                 else:
                     plain_text, text_styles = convert_markdown(message_text)
-                    success = send_signal_message(recipient, plain_text, request_counter.next(), text_styles)
+                    send_result = send_signal_message(recipient, plain_text, request_counter.next(), text_styles)
             except (OSError, RuntimeError, json.JSONDecodeError) as error:
                 log(f"Error in /send handler: {error}")
                 self.send_error_response(500, str(error))
                 return
 
-            if not success:
+            if send_result == "rate_limited":
+                self.send_response(429)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "error": "rate_limited",
+                    "retryAfterSeconds": _rate_limit_retry_after_seconds,
+                }).encode())
+                return
+
+            if send_result == "error":
                 self.send_error_response(502, "signal-cli failed to send message")
                 return
 
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"ok": True}).encode())
+
+        def _handle_challenge(self) -> None:
+            global _rate_limit_token
+            content_length = int(self.headers.get("Content-Length", 0))
+            raw_body = self.rfile.read(content_length)
+
+            try:
+                body = json.loads(raw_body)
+            except json.JSONDecodeError as error:
+                self.send_error_response(400, f"Invalid JSON: {error}")
+                return
+
+            if not isinstance(body, dict):
+                self.send_error_response(400, "Request body must be a JSON object")
+                return
+
+            if _rate_limit_token is None:
+                self.send_error_response(400, "No pending rate limit challenge")
+                return
+
+            captcha = body.get("captcha")
+            if not isinstance(captcha, str) or not captcha:
+                self.send_error_response(400, "Missing or invalid captcha")
+                return
+
+            log(f"Submitting rate limit challenge, token={_rate_limit_token!r}, captcha length={len(captcha)}")
+            try:
+                connection = http.client.HTTPConnection("localhost", 8080, timeout=10)
+                rpc_body = json.dumps({
+                    "jsonrpc": "2.0",
+                    "method": "submitRateLimitChallenge",
+                    "params": {
+                        "challenge": _rate_limit_token,
+                        "captcha": captcha,
+                    },
+                    "id": request_counter.next(),
+                })
+                headers = {"Content-Type": "application/json"}
+                connection.request("POST", "/api/v1/rpc", rpc_body, headers)
+                response = connection.getresponse()
+                response_data = response.read()
+                connection.close()
+
+                if response.status != 200:
+                    log(f"Warning: signal-cli submitRateLimitChallenge returned status {response.status}")
+                    self.send_error_response(502, f"signal-cli returned status {response.status}")
+                    return
+
+                result = json.loads(response_data)
+            except (OSError, RuntimeError, json.JSONDecodeError) as error:
+                log(f"Error in /challenge handler: {error}")
+                self.send_error_response(500, str(error))
+                return
+
+            if "error" in result:
+                log(f"Warning: signal-cli submitRateLimitChallenge failed: {result['error']}")
+                self.send_response(502)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": result["error"]}).encode())
+                return
+
+            _rate_limit_token = None
+            log("Rate limit challenge submitted successfully, token cleared")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
