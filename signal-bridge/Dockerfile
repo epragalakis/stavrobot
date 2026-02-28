@@ -6,7 +6,8 @@ RUN apt-get update && \
     curl \
     ca-certificates \
     python3 \
-    python3-pip && \
+    python3-pip \
+    qrencode && \
     pip3 install --break-system-packages mistune && \
     rm -rf /var/lib/apt/lists/*
 

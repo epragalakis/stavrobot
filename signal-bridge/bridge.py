@@ -82,6 +82,8 @@ def start_signal_cli(account: str) -> subprocess.Popen:
     """Start signal-cli daemon as a subprocess."""
     command = [
         "signal-cli",
+        "--trust-new-identities",
+        "always",
         "-a",
         account,
         "daemon",

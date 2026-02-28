@@ -47,12 +47,17 @@ The `coder` container uses Claude Code with subscription auth (OAuth), separate 
 Signal requires a **separate phone number** — not your personal one. A prepaid SIM or VoIP number works.
 
 1. Uncomment `COMPOSE_PROFILES=signal` in your `.env` file to enable the signal-bridge container.
-2. Start the containers: `docker compose up --build`
-3. Exec into the signal-bridge container: `docker compose exec signal-bridge bash`
-4. Register: `signal-cli -u +YOUR_NUMBER register`
-5. Verify with the code you receive: `signal-cli -u +YOUR_NUMBER verify CODE`
-6. Set `[signal].account` in your config.
-7. After first startup, add allowed numbers via the `/settings` web UI.
+2. Build the containers: `docker compose --profile signal build`
+3. Register Signal on the container (pick one):
+   - **Link to an existing Signal account:** `docker compose --profile signal run --rm --entrypoint bash signal-bridge -c 'signal-cli link -n "Stavrobot" | tee >(xargs -L 1 qrencode -t utf8)'` — scan the QR code with your phone (Signal > Settings > Linked devices).
+   - **Register a new number:** `docker compose --profile signal run --rm --entrypoint bash signal-bridge -c 'signal-cli -u +YOUR_NUMBER register'`, then verify with `docker compose --profile signal run --rm --entrypoint bash signal-bridge -c 'signal-cli -u +YOUR_NUMBER verify CODE'`.
+4. Set `[signal].account` in your config.
+5. Start the containers: `docker compose up --build`
+6. After first startup, add allowed numbers via the `/settings` web UI.
+7. **Important:** signal-cli does not resolve phone numbers for contacts it hasn't messaged yet. The bot must send the first message to each contact by phone number before it can receive and identify incoming messages from them. To trigger this for the owner, run:
+   ```
+   docker compose exec app node -e "fetch('http://localhost:3001/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:'Send the message \"Hello from Stavrobot\" to my Signal number.'})}).then(r=>r.text()).then(console.log)"
+   ```
 8. See the [signal-cli quickstart](https://github.com/AsamK/signal-cli/wiki/Quickstart) for details.
 
 ### Telegram setup
