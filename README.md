@@ -65,6 +65,8 @@ Signal requires a **separate phone number** — not your personal one. A prepaid
 
 ### WhatsApp setup
 
+WhatsApp requires a **separate phone number**, as otherwise you'd be messaging yourself, which doesn't really work.
+
 WhatsApp uses [Baileys](https://github.com/WhiskeySockets/Baileys), an unofficial WhatsApp Web library that links as a companion device (like WhatsApp Web). No separate phone number is needed — it links to your existing WhatsApp account.
 
 **Risk:** Baileys uses an unofficial API. WhatsApp may ban accounts that use it. Use at your own risk.
