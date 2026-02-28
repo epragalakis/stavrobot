@@ -527,6 +527,7 @@ Defines the owner's identity. Used on startup to upsert the owner interlocutor r
 - `name` (required) — Display name for the owner.
 - `signal` (optional) — Owner's Signal phone number in international format.
 - `telegram` (optional) — Owner's Telegram chat ID.
+- `whatsapp` (optional) — Owner's WhatsApp phone number in E.164 format.
 
 ### Optional fields
 

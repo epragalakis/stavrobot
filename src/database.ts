@@ -229,6 +229,9 @@ export async function seedOwner(pool: pg.Pool, ownerConfig: OwnerConfig): Promis
   if (ownerConfig.telegram !== undefined) {
     identities.push({ service: "telegram", identifier: ownerConfig.telegram });
   }
+  if (ownerConfig.whatsapp !== undefined) {
+    identities.push({ service: "whatsapp", identifier: ownerConfig.whatsapp });
+  }
 
   for (const identity of identities) {
     // The partial unique index only covers rows where identifier IS NOT NULL, so
