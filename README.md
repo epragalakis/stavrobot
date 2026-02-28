@@ -182,10 +182,10 @@ See [PLUGIN.md](coder/PLUGIN.md) for everything you need to know to create a Sta
 
 ## Recommended plugins
 
-- Google Calendar: Ask Stavrobot to install https://github.com/stavrobot/plugin-google-calendar.git
-- Google Flights: Ask Stavrobot to install https://github.com/stavrobot/plugin-flights.git
-- Weather: Ask Stavrobot to install https://github.com/stavrobot/plugin-weather.git
-- Hacker News front page: Ask Stavrobot to install https://github.com/stavrobot/plugin-hackernews.git
+You can find plugins here:
+
+https://github.com/orgs/stavrobot/repositories
+
 
 ## Architecture
 

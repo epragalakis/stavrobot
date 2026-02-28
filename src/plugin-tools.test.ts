@@ -1,5 +1,16 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { createRunPluginToolTool, createManagePluginsTool, createRequestCodingTaskTool } from "./plugin-tools.js";
+import fs from "fs/promises";
+import path from "path";
+import { TEMP_ATTACHMENTS_DIR } from "./temp-dir.js";
+
+vi.mock("fs/promises", () => ({
+  default: {
+    rm: vi.fn().mockResolvedValue(undefined),
+    mkdir: vi.fn().mockResolvedValue(undefined),
+    writeFile: vi.fn().mockResolvedValue(undefined),
+  },
+}));
 
 function mockFetch(status: number, body: string): void {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
@@ -14,6 +25,12 @@ afterEach(() => {
 
 describe("createRunPluginToolTool", () => {
   const tool = createRunPluginToolTool();
+
+  beforeEach(() => {
+    vi.mocked(fs.rm).mockClear().mockResolvedValue(undefined);
+    vi.mocked(fs.mkdir).mockClear().mockResolvedValue(undefined);
+    vi.mocked(fs.writeFile).mockClear().mockResolvedValue(undefined);
+  });
 
   it("formats a successful sync result with string output", async () => {
     mockFetch(200, JSON.stringify({ success: true, output: "hello world" }));
@@ -63,6 +80,56 @@ describe("createRunPluginToolTool", () => {
     const result = await tool.execute("call-7", { plugin: "myplugin", tool: "mytool", parameters: "{}" });
     const text = (result.content[0] as { type: string; text: string }).text;
     expect(text).toBe(JSON.stringify({ result: "something" }));
+  });
+
+  it("clears the plugin files directory before making the HTTP request", async () => {
+    mockFetch(200, JSON.stringify({ success: true, output: "done" }));
+    await tool.execute("call-8", { plugin: "myplugin", tool: "mytool", parameters: "{}" });
+    expect(vi.mocked(fs.rm)).toHaveBeenCalledWith(
+      path.join(TEMP_ATTACHMENTS_DIR, "myplugin"),
+      { recursive: true, force: true },
+    );
+  });
+
+  it("saves transported files and appends 'Files produced' line to result", async () => {
+    const fileData = Buffer.from("hello file").toString("base64");
+    mockFetch(200, JSON.stringify({
+      success: true,
+      output: "done",
+      files: [{ filename: "report.txt", data: fileData }],
+    }));
+    const result = await tool.execute("call-9", { plugin: "myplugin", tool: "mytool", parameters: "{}" });
+    const text = (result.content[0] as { type: string; text: string }).text;
+    const expectedDir = path.join(TEMP_ATTACHMENTS_DIR, "myplugin");
+    expect(vi.mocked(fs.mkdir)).toHaveBeenCalledWith(expectedDir, { recursive: true });
+    expect(vi.mocked(fs.writeFile)).toHaveBeenCalledWith(
+      path.join(expectedDir, "report.txt"),
+      Buffer.from(fileData, "base64"),
+    );
+    expect(text).toContain(`\n\nFiles produced: ${expectedDir}/`);
+  });
+
+  it("does not append 'Files produced' when files array is empty", async () => {
+    mockFetch(200, JSON.stringify({ success: true, output: "done", files: [] }));
+    const result = await tool.execute("call-10", { plugin: "myplugin", tool: "mytool", parameters: "{}" });
+    const text = (result.content[0] as { type: string; text: string }).text;
+    expect(text).not.toContain("Files produced");
+    expect(vi.mocked(fs.mkdir)).not.toHaveBeenCalled();
+  });
+
+  it("does not append 'Files produced' when files entries are invalid", async () => {
+    mockFetch(200, JSON.stringify({ success: true, output: "done", files: [{ bad: "entry" }] }));
+    const result = await tool.execute("call-11", { plugin: "myplugin", tool: "mytool", parameters: "{}" });
+    const text = (result.content[0] as { type: string; text: string }).text;
+    expect(text).not.toContain("Files produced");
+    expect(vi.mocked(fs.mkdir)).not.toHaveBeenCalled();
+  });
+
+  it("does not append 'Files produced' when response has no files field", async () => {
+    mockFetch(200, JSON.stringify({ success: true, output: "done" }));
+    const result = await tool.execute("call-12", { plugin: "myplugin", tool: "mytool", parameters: "{}" });
+    const text = (result.content[0] as { type: string; text: string }).text;
+    expect(text).not.toContain("Files produced");
   });
 });
 

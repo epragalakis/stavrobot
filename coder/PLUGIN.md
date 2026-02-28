@@ -32,7 +32,7 @@ When installed, the repository is cloned into `data/plugins/my-plugin/`.
 Every plugin must include a `README.md` at the repository root. The README should contain:
 
 - A summary of what the plugin does and why a user would want to install it.
-- Installation instructions (e.g., the git URL to pass to the install command, any required configuration values and how to obtain them).
+- Installation instructions (e.g., the git repo URL to pass to the bot, any required configuration values and how to obtain them).
 
 This is the first thing a potential user sees when browsing the repository, so it should be concise and practical.
 
@@ -166,12 +166,63 @@ Each tool subdirectory contains its own `manifest.json`:
 
 Only set `async: true` for tools that are expected to run for more than 30 seconds. Async tools add complexity because the result arrives as a separate message rather than inline, which can be disorienting for the agent. Prefer synchronous tools whenever possible.
 
+## Producing files
+
+Synchronous tools can produce files by writing them to `/tmp/<plugin_name>/` (where `<plugin_name>` is the plugin's `name` from the manifest). After the tool exits, the plugin-runner scans that directory and transports any files it finds to the main app. The agent is told the directory where the files were saved and can construct the full path.
+
+Rules:
+
+- Only top-level files are transported. Subdirectories are ignored.
+- The directory is cleared before and after each tool run. Do not rely on files persisting between runs.
+- Maximum total file size per tool run is 25 MB. If the limit is exceeded, no files are transported and a warning is logged.
+- File transport works for both synchronous and asynchronous tools. For async tools, the files are delivered as attachments alongside the callback message.
+
+The tool's text output should reference produced files by filename (e.g., `"Generated audio: output.mp3"`). The agent will combine that with the directory path it receives to locate the file.
+
+Common use cases: TTS audio, generated images, exported data files.
+
+### Example: a tool that produces an audio file
+
+```python
+#!/usr/bin/env -S uv run
+# /// script
+# dependencies = ["gtts"]
+# ///
+
+import json
+import sys
+from pathlib import Path
+
+
+KNOWN_PARAMS = {"text"}
+
+
+def main() -> None:
+    """Convert text to speech and write the audio file to the output directory."""
+    params = json.load(sys.stdin)
+    unknown = set(params) - KNOWN_PARAMS
+    if unknown:
+        print(f"Unknown parameters: {', '.join(sorted(unknown))}", file=sys.stderr)
+        sys.exit(1)
+
+    from gtts import gTTS
+
+    output_dir = Path("/tmp/my-plugin")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    tts = gTTS(params["text"])
+    tts.save(output_dir / "output.mp3")
+    json.dump({"file": "output.mp3"}, sys.stdout)
+
+
+main()
+```
+
 ## Runtime environment
 
 Plugin tools run inside the `plugin-runner` Docker container, which is completely separate from the main app container. This means:
 
 - Tools cannot access the app's filesystem, source code, secrets, or config.
-- Each plugin runs as its own dedicated system user (`plug_<name>`). Plugin directories are restricted with `chmod 700`, so a plugin cannot read or write any other plugin's files or configuration. A plugin can only access its own directory (e.g., `/plugins/my-plugin/`).
+- Each plugin runs as its own dedicated system user (`plug_<name>`). Plugin directories are restricted with `chmod 700`, so a plugin cannot read or write any other plugin's files or configuration. A plugin can only access its own directory (e.g., `/plugins/my-plugin/`) and its temporary output directory (`/tmp/<plugin_name>/`).
 - Tools can make outbound network requests (there is no network isolation).
 
 The following runtimes and tools are available in the container:

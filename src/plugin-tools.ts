@@ -1,6 +1,9 @@
+import fs from "fs/promises";
+import path from "path";
 import { Type } from "@mariozechner/pi-ai";
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import { encodeToToon } from "./toon.js";
+import { TEMP_ATTACHMENTS_DIR } from "./temp-dir.js";
 
 const PLUGIN_RUNNER_BASE_URL = "http://plugin-runner:3003";
 const CLAUDE_CODE_BASE_URL = "http://coder:3002";
@@ -349,6 +352,11 @@ export function createRunPluginToolTool(): AgentTool {
       const { plugin, tool, parameters } = params as { plugin: string; tool: string; parameters: string };
       console.log("[stavrobot] run_plugin_tool called: plugin:", plugin, "tool:", tool, "parameters:", parameters);
       const parsedParameters = JSON.parse(parameters) as unknown;
+
+      const pluginFilesDir = path.join(TEMP_ATTACHMENTS_DIR, plugin);
+      // Clear stale files from previous runs.
+      await fs.rm(pluginFilesDir, { recursive: true, force: true });
+
       const response = await fetch(`${PLUGIN_RUNNER_BASE_URL}/bundles/${plugin}/tools/${tool}/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -356,7 +364,43 @@ export function createRunPluginToolTool(): AgentTool {
       });
       const responseText = await response.text();
       console.log("[stavrobot] run_plugin_tool result:", responseText.length, "characters");
-      const result = formatRunPluginToolResult(plugin, tool, responseText, response.status);
+      let result = formatRunPluginToolResult(plugin, tool, responseText, response.status);
+
+      let filesDir: string | undefined;
+      try {
+        const parsed = JSON.parse(responseText) as unknown;
+        if (
+          typeof parsed === "object" &&
+          parsed !== null &&
+          "files" in parsed &&
+          Array.isArray((parsed as Record<string, unknown>).files)
+        ) {
+          const files = (parsed as Record<string, unknown>).files as unknown[];
+          const validFiles = files.filter(
+            (f): f is { filename: string; data: string } =>
+              typeof f === "object" &&
+              f !== null &&
+              typeof (f as Record<string, unknown>).filename === "string" &&
+              typeof (f as Record<string, unknown>).data === "string"
+          );
+          if (validFiles.length > 0) {
+            await fs.mkdir(pluginFilesDir, { recursive: true });
+            for (const file of validFiles) {
+              const filePath = path.join(pluginFilesDir, file.filename);
+              await fs.writeFile(filePath, Buffer.from(file.data, "base64"));
+            }
+            filesDir = pluginFilesDir;
+            console.log(`[stavrobot] run_plugin_tool: saved ${validFiles.length} file(s) to ${pluginFilesDir}`);
+          }
+        }
+      } catch {
+        // If JSON parsing fails here, formatRunPluginToolResult already handled it.
+      }
+
+      if (filesDir !== undefined) {
+        result += `\n\nFiles produced: ${filesDir}/`;
+      }
+
       return {
         content: [{ type: "text" as const, text: result }],
         details: { result },

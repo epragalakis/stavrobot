@@ -4,7 +4,7 @@ import pg from "pg";
 import { CronExpressionParser } from "cron-parser";
 import { listCronEntries, deleteCronEntry } from "./database.js";
 import { enqueueMessage } from "./queue.js";
-import { UPLOADS_DIR } from "./uploads.js";
+import { TEMP_ATTACHMENTS_DIR } from "./temp-dir.js";
 
 interface ScheduledEntry {
   id: number;
@@ -47,7 +47,7 @@ const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
 async function cleanupOldUploads(): Promise<void> {
   let entries: string[];
   try {
-    entries = await fs.promises.readdir(UPLOADS_DIR);
+    entries = await fs.promises.readdir(TEMP_ATTACHMENTS_DIR);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return;
@@ -60,7 +60,7 @@ async function cleanupOldUploads(): Promise<void> {
     if (!entry.startsWith("upload-")) {
       continue;
     }
-    const filePath = path.join(UPLOADS_DIR, entry);
+    const filePath = path.join(TEMP_ATTACHMENTS_DIR, entry);
     try {
       const stat = await fs.promises.stat(filePath);
       if (now - stat.mtimeMs > THREE_DAYS_MS) {

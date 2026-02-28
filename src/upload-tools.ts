@@ -3,7 +3,7 @@ import path from "node:path";
 import { Type } from "@mariozechner/pi-ai";
 import type { ImageContent } from "@mariozechner/pi-ai";
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
-import { UPLOADS_DIR } from "./uploads.js";
+import { TEMP_ATTACHMENTS_DIR } from "./temp-dir.js";
 
 const IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp"]);
 const TEXT_EXTENSIONS = new Set([".txt", ".md", ".csv", ".json", ".xml", ".html", ".css", ".js", ".ts", ".py", ".sh", ".yml", ".yaml", ".toml", ".ini", ".cfg", ".log", ".sql", ".env"]);
@@ -19,7 +19,7 @@ Actions:
 - help: show this help text.
 
 Constraints:
-- The path must be the full path to the file inside ${UPLOADS_DIR}.
+- The path must be the full path to the file inside ${TEMP_ATTACHMENTS_DIR}.
 - Files must be inside the uploads directory; paths outside it are rejected.`;
 
 function inferMimeType(extension: string): string {
@@ -41,9 +41,9 @@ function inferMimeType(extension: string): string {
 function validatePath(filePath: string): string | null {
   // Normalize to resolve any .. or . segments, then check the prefix.
   const normalized = path.normalize(filePath);
-  const uploadsPrefix = UPLOADS_DIR.endsWith("/") ? UPLOADS_DIR : `${UPLOADS_DIR}/`;
+  const uploadsPrefix = TEMP_ATTACHMENTS_DIR.endsWith("/") ? TEMP_ATTACHMENTS_DIR : `${TEMP_ATTACHMENTS_DIR}/`;
   if (!normalized.startsWith(uploadsPrefix)) {
-    return `Invalid path: must be inside ${UPLOADS_DIR}.`;
+    return `Invalid path: must be inside ${TEMP_ATTACHMENTS_DIR}.`;
   }
   return null;
 }

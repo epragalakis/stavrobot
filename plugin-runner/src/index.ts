@@ -424,13 +424,41 @@ async function runScript(
   });
 }
 
-async function postCallback(source: string, message: string): Promise<void> {
+function mimeTypeFromFilename(filename: string): string {
+  const ext = filename.slice(filename.lastIndexOf(".")).toLowerCase();
+  switch (ext) {
+    case ".mp3": return "audio/mpeg";
+    case ".wav": return "audio/wav";
+    case ".ogg": return "audio/ogg";
+    case ".m4a": return "audio/mp4";
+    case ".png": return "image/png";
+    case ".jpg":
+    case ".jpeg": return "image/jpeg";
+    case ".gif": return "image/gif";
+    case ".webp": return "image/webp";
+    case ".pdf": return "application/pdf";
+    case ".json": return "application/json";
+    case ".csv": return "text/csv";
+    case ".txt": return "text/plain";
+    default: return "application/octet-stream";
+  }
+}
+
+async function postCallback(source: string, message: string, files?: TransportedFile[]): Promise<void> {
   console.log(`[stavrobot-plugin-runner] Posting callback from "${source}" to ${APP_INTERNAL_URL}`);
   try {
+    const body: Record<string, unknown> = { source, message };
+    if (files !== undefined && files.length > 0) {
+      body.files = files.map((file) => ({
+        data: file.data,
+        filename: file.filename,
+        mimeType: mimeTypeFromFilename(file.filename),
+      }));
+    }
     const response = await fetch(APP_INTERNAL_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ source, message }),
+      body: JSON.stringify(body),
     });
     console.log(`[stavrobot-plugin-runner] Callback posted, status: ${response.status}`);
   } catch (error) {
@@ -548,6 +576,51 @@ function handleGetBundle(bundleName: string, response: http.ServerResponse): voi
   response.end(JSON.stringify(responseBody));
 }
 
+const MAX_FILE_TRANSPORT_BYTES = 25 * 1024 * 1024; // 25MB
+
+interface TransportedFile {
+  filename: string;
+  data: string;
+}
+
+// Scan pluginTempDir for top-level files, base64-encode them, and return the
+// array. Returns an empty array if the directory doesn't exist or is empty.
+// If the total size of all files exceeds MAX_FILE_TRANSPORT_BYTES, logs a
+// warning and returns an empty array rather than a partial result.
+function scanPluginTempDir(pluginTempDir: string, bundleName: string): TransportedFile[] {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(pluginTempDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const fileEntries = entries.filter((entry) => entry.isFile());
+  if (fileEntries.length === 0) {
+    return [];
+  }
+
+  let totalBytes = 0;
+  for (const entry of fileEntries) {
+    const filePath = path.join(pluginTempDir, entry.name);
+    const stat = fs.statSync(filePath);
+    totalBytes += stat.size;
+  }
+
+  if (totalBytes > MAX_FILE_TRANSPORT_BYTES) {
+    console.warn(
+      `[stavrobot-plugin-runner] Plugin "${bundleName}" produced ${totalBytes} bytes of files, exceeding the ${MAX_FILE_TRANSPORT_BYTES}-byte limit; skipping file transport`
+    );
+    return [];
+  }
+
+  return fileEntries.map((entry) => {
+    const filePath = path.join(pluginTempDir, entry.name);
+    const data = fs.readFileSync(filePath).toString("base64");
+    return { filename: entry.name, data };
+  });
+}
+
 async function handleRunTool(
   bundleName: string,
   toolName: string,
@@ -580,6 +653,13 @@ async function handleRunTool(
   const entrypoint = path.join(toolDir, manifest.entrypoint);
   const { uid, gid } = getPluginUserIds(bundleName);
 
+  const pluginTempDir = `/tmp/${bundleName}`;
+  // Clear any leftover files from previous runs.
+  fs.rmSync(pluginTempDir, { recursive: true, force: true });
+  fs.mkdirSync(pluginTempDir, { recursive: true });
+  // Make it writable by the plugin user.
+  fs.chownSync(pluginTempDir, uid, gid);
+
   if (manifest.async === true) {
     response.writeHead(202, { "Content-Type": "application/json" });
     response.end(JSON.stringify({ status: "running" }));
@@ -592,6 +672,7 @@ async function handleRunTool(
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         console.error(`[stavrobot-plugin-runner] Async tool ${bundleName}/${toolName} threw unexpectedly: ${errorMessage}`);
+        fs.rmSync(pluginTempDir, { recursive: true, force: true });
         await postCallback(
           source,
           `The run of tool "${toolName}" (plugin "${bundleName}") failed:\n\`\`\`\n${errorMessage}\n\`\`\``
@@ -600,10 +681,13 @@ async function handleRunTool(
       }
 
       if (result.success) {
+        const files = scanPluginTempDir(pluginTempDir, bundleName);
+        fs.rmSync(pluginTempDir, { recursive: true, force: true });
         console.log(`[stavrobot-plugin-runner] Async tool ${bundleName}/${toolName} completed successfully`);
         await postCallback(
           source,
-          `The run of tool "${toolName}" (plugin "${bundleName}") returned:\n\`\`\`\n${result.output}\n\`\`\``
+          `The run of tool "${toolName}" (plugin "${bundleName}") returned:\n\`\`\`\n${result.output}\n\`\`\``,
+          files,
         );
       } else {
         // Distinguish timeout from other failures for a clearer error message.
@@ -611,6 +695,7 @@ async function handleRunTool(
           ? `Tool "${toolName}" (plugin "${bundleName}") exceeded the timeout of ${ASYNC_TIMEOUT_MS / 1000} seconds`
           : (result.error ?? result.output);
         console.error(`[stavrobot-plugin-runner] Async tool ${bundleName}/${toolName} failed: ${errorText}`);
+        fs.rmSync(pluginTempDir, { recursive: true, force: true });
         await postCallback(
           source,
           `The run of tool "${toolName}" (plugin "${bundleName}") failed:\n\`\`\`\n${errorText}\n\`\`\``
@@ -624,6 +709,8 @@ async function handleRunTool(
   const result = await runScript(entrypoint, toolDir, uid, gid, body, TOOL_TIMEOUT_MS);
 
   if (!result.success) {
+    fs.rmSync(pluginTempDir, { recursive: true, force: true });
+
     if (result.spawnFailed === true) {
       console.error(`[stavrobot-plugin-runner] Tool ${bundleName}/${toolName} failed to spawn: ${result.error}`);
       response.writeHead(500, { "Content-Type": "application/json" });
@@ -646,6 +733,9 @@ async function handleRunTool(
     return;
   }
 
+  const files = scanPluginTempDir(pluginTempDir, bundleName);
+  fs.rmSync(pluginTempDir, { recursive: true, force: true });
+
   let output: unknown;
   try {
     output = JSON.parse(result.output);
@@ -655,7 +745,14 @@ async function handleRunTool(
 
   console.log(`[stavrobot-plugin-runner] Tool ${bundleName}/${toolName} completed successfully`);
   response.writeHead(200, { "Content-Type": "application/json" });
-  response.end(JSON.stringify({ success: true, output }));
+
+  const responseBody: Record<string, unknown> = { success: true, output };
+  if (files.length > 0) {
+    console.log(`[stavrobot-plugin-runner] Tool ${bundleName}/${toolName} produced ${files.length} file(s) for transport`);
+    responseBody["files"] = files;
+  }
+
+  response.end(JSON.stringify(responseBody));
 }
 
 async function handleCreate(

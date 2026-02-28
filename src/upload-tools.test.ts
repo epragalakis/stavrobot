@@ -3,7 +3,7 @@ import path from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { TextContent, ImageContent } from "@mariozechner/pi-ai";
 import { createManageUploadsTool } from "./upload-tools.js";
-import { UPLOADS_DIR } from "./uploads.js";
+import { TEMP_ATTACHMENTS_DIR } from "./temp-dir.js";
 
 function asText(content: unknown): string {
   const item = content as TextContent;
@@ -15,15 +15,15 @@ function asImage(content: unknown): ImageContent {
 }
 
 async function writeTestFile(filename: string, content: string): Promise<string> {
-  await fs.mkdir(UPLOADS_DIR, { recursive: true });
-  const filePath = path.join(UPLOADS_DIR, filename);
+  await fs.mkdir(TEMP_ATTACHMENTS_DIR, { recursive: true });
+  const filePath = path.join(TEMP_ATTACHMENTS_DIR, filename);
   await fs.writeFile(filePath, content, "utf-8");
   return filePath;
 }
 
 async function writeTestBinaryFile(filename: string, data: Buffer): Promise<string> {
-  await fs.mkdir(UPLOADS_DIR, { recursive: true });
-  const filePath = path.join(UPLOADS_DIR, filename);
+  await fs.mkdir(TEMP_ATTACHMENTS_DIR, { recursive: true });
+  const filePath = path.join(TEMP_ATTACHMENTS_DIR, filename);
   await fs.writeFile(filePath, data);
   return filePath;
 }
@@ -50,7 +50,7 @@ describe("createManageUploadsTool - help", () => {
 describe("createManageUploadsTool - read", () => {
   const tool = createManageUploadsTool();
   const testFilename = "upload-test-read-tool.txt";
-  const testPath = path.join(UPLOADS_DIR, testFilename);
+  const testPath = path.join(TEMP_ATTACHMENTS_DIR, testFilename);
 
   afterEach(async () => {
     try {
@@ -68,7 +68,7 @@ describe("createManageUploadsTool - read", () => {
   });
 
   it("returns an error message when the file does not exist", async () => {
-    const result = await tool.execute("call-2", { action: "read", path: path.join(UPLOADS_DIR, "upload-nonexistent-xyz.txt") });
+    const result = await tool.execute("call-2", { action: "read", path: path.join(TEMP_ATTACHMENTS_DIR, "upload-nonexistent-xyz.txt") });
     expect(asText(result.content[0])).toMatch(/not found/i);
   });
 
@@ -78,7 +78,7 @@ describe("createManageUploadsTool - read", () => {
   });
 
   it("rejects paths that traverse out of the uploads directory", async () => {
-    const result = await tool.execute("call-4", { action: "read", path: path.join(UPLOADS_DIR, "../etc/passwd") });
+    const result = await tool.execute("call-4", { action: "read", path: path.join(TEMP_ATTACHMENTS_DIR, "../etc/passwd") });
     expect(asText(result.content[0])).toMatch(/invalid path/i);
   });
 
@@ -86,7 +86,7 @@ describe("createManageUploadsTool - read", () => {
     vi.spyOn(fs, "readFile").mockRejectedValueOnce(
       Object.assign(new Error("Permission denied"), { code: "EACCES" }),
     );
-    await expect(tool.execute("call-5", { action: "read", path: path.join(UPLOADS_DIR, "upload-perm-denied.txt") })).rejects.toThrow("Permission denied");
+    await expect(tool.execute("call-5", { action: "read", path: path.join(TEMP_ATTACHMENTS_DIR, "upload-perm-denied.txt") })).rejects.toThrow("Permission denied");
     vi.restoreAllMocks();
   });
 
@@ -134,8 +134,8 @@ describe("createManageUploadsTool - read", () => {
 
   it("returns text content for a file with no extension", async () => {
     const noExtFilename = "upload-test-read-tool-noext";
-    const noExtPath = path.join(UPLOADS_DIR, noExtFilename);
-    await fs.mkdir(UPLOADS_DIR, { recursive: true });
+    const noExtPath = path.join(TEMP_ATTACHMENTS_DIR, noExtFilename);
+    await fs.mkdir(TEMP_ATTACHMENTS_DIR, { recursive: true });
     await fs.writeFile(noExtPath, "plain text content", "utf-8");
     try {
       const result = await tool.execute("call-9", { action: "read", path: noExtPath });
@@ -155,7 +155,7 @@ describe("createManageUploadsTool - read", () => {
 describe("createManageUploadsTool - delete", () => {
   const tool = createManageUploadsTool();
   const testFilename = "upload-test-delete-tool.txt";
-  const testPath = path.join(UPLOADS_DIR, testFilename);
+  const testPath = path.join(TEMP_ATTACHMENTS_DIR, testFilename);
 
   beforeEach(async () => {
     await writeTestFile(testFilename, "to be deleted");
@@ -176,7 +176,7 @@ describe("createManageUploadsTool - delete", () => {
   });
 
   it("returns a 'not found' message when the file does not exist", async () => {
-    const result = await tool.execute("call-2", { action: "delete", path: path.join(UPLOADS_DIR, "upload-nonexistent-xyz.txt") });
+    const result = await tool.execute("call-2", { action: "delete", path: path.join(TEMP_ATTACHMENTS_DIR, "upload-nonexistent-xyz.txt") });
     expect(asText(result.content[0])).toMatch(/not found/i);
   });
 
@@ -186,7 +186,7 @@ describe("createManageUploadsTool - delete", () => {
   });
 
   it("rejects paths that traverse out of the uploads directory", async () => {
-    const result = await tool.execute("call-4", { action: "delete", path: path.join(UPLOADS_DIR, "../etc/passwd") });
+    const result = await tool.execute("call-4", { action: "delete", path: path.join(TEMP_ATTACHMENTS_DIR, "../etc/passwd") });
     expect(asText(result.content[0])).toMatch(/invalid path/i);
   });
 
@@ -194,7 +194,7 @@ describe("createManageUploadsTool - delete", () => {
     vi.spyOn(fs, "unlink").mockRejectedValueOnce(
       Object.assign(new Error("Permission denied"), { code: "EACCES" }),
     );
-    await expect(tool.execute("call-5", { action: "delete", path: path.join(UPLOADS_DIR, "upload-perm-denied.txt") })).rejects.toThrow("Permission denied");
+    await expect(tool.execute("call-5", { action: "delete", path: path.join(TEMP_ATTACHMENTS_DIR, "upload-perm-denied.txt") })).rejects.toThrow("Permission denied");
     vi.restoreAllMocks();
   });
 

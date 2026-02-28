@@ -4,10 +4,7 @@ import path from "path";
 import crypto from "crypto";
 import busboy from "busboy";
 import { enqueueMessage } from "./queue.js";
-
-// Files are stored in /tmp/uploads inside the container with no volume mount,
-// so they are lost on container restart. Persistent storage is future work.
-export const UPLOADS_DIR = "/tmp/uploads";
+import { TEMP_ATTACHMENTS_DIR } from "./temp-dir.js";
 
 export interface FileAttachment {
   storedPath: string;
@@ -21,11 +18,11 @@ export async function saveAttachment(
   originalFilename: string,
   mimeType: string,
 ): Promise<{ storedPath: string; storedFilename: string }> {
-  await fs.promises.mkdir(UPLOADS_DIR, { recursive: true });
+  await fs.promises.mkdir(TEMP_ATTACHMENTS_DIR, { recursive: true });
 
   const extension = path.extname(originalFilename);
   const storedFilename = `upload-${crypto.randomUUID()}${extension}`;
-  const storedPath = path.join(UPLOADS_DIR, storedFilename);
+  const storedPath = path.join(TEMP_ATTACHMENTS_DIR, storedFilename);
 
   console.log("[stavrobot] Saving attachment to:", storedPath, "mimeType:", mimeType);
 
