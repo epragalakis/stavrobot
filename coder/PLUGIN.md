@@ -27,6 +27,17 @@ my-plugin/                 # Repository root (e.g., github.com/user/my-plugin)
 
 When installed, the repository is cloned into `data/plugins/my-plugin/`.
 
+## New plugin
+
+If creating a new plugin:
+
+1. Make sure the plugin directory is a git repository, named `plugin-<distinctive name>`.
+2. .gitignore config.json and all usual gitignored files for the stack (e.g.
+   __pycache__, .pyc, and other such files). NEVER READ config.json, it contains secrets.
+3. Delete/do not commit PLUGIN.md
+4. When done, if everything is working and tested, commit and push to that repo.
+
+
 ## README
 
 Every plugin must include a `README.md` at the repository root. The README should contain:
