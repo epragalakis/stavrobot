@@ -130,6 +130,7 @@ interface LoadedBundle {
   bundleDir: string;
   manifest: BundleManifest;
   tools: LoadedTool[];
+  permissions: string[];
 }
 
 interface LoadedTool {
@@ -155,6 +156,49 @@ function readJsonFile(filePath: string): unknown | null {
   } catch {
     return null;
   }
+}
+
+// Read the permissions array from config.json. If config.json doesn't exist,
+// has no permissions key, or the value is malformed (not an array of strings),
+// write ["*"] to config.json and return it. This ensures all existing plugins
+// get the default and the value is always valid when returned.
+function migratePermissions(bundleDir: string, pluginName: string): string[] {
+  const configPath = path.join(bundleDir, "config.json");
+  const rawConfig = readJsonFile(configPath);
+  const configObject =
+    typeof rawConfig === "object" && rawConfig !== null
+      ? (rawConfig as Record<string, unknown>)
+      : {};
+
+  const rawPermissions = configObject["permissions"];
+  const isValidPermissions =
+    Array.isArray(rawPermissions) &&
+    rawPermissions.every((item) => typeof item === "string");
+
+  if (isValidPermissions) {
+    return rawPermissions as string[];
+  }
+
+  // Write the default permissions. Existing config keys are preserved.
+  const merged = { ...configObject, permissions: ["*"] };
+  fs.writeFileSync(configPath, JSON.stringify(merged, null, 2));
+
+  // Fix ownership so the plugin user can read the file.
+  try {
+    const { uid, gid } = getPluginUserIds(pluginName);
+    fs.chownSync(configPath, uid, gid);
+  } catch (error) {
+    // The plugin user may not exist yet during early startup; log and continue.
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `[stavrobot-plugin-runner] Could not chown config.json for "${pluginName}" during permissions migration: ${message}`
+    );
+  }
+
+  console.log(
+    `[stavrobot-plugin-runner] Wrote default permissions ["*"] to config.json for plugin "${pluginName}"`
+  );
+  return ["*"];
 }
 
 function loadBundles(): void {
@@ -226,7 +270,12 @@ function loadBundles(): void {
       tools.push({ toolDir, manifest: rawToolManifest });
     }
 
-    loadedBundles.push({ bundleDir, manifest: rawBundleManifest, tools });
+    // Ensure config.json has a permissions key. If missing, write the default
+    // ["*"] so all existing plugins are treated as fully enabled. This runs on
+    // every loadBundles() call, which is safe because existing values win.
+    const permissions = migratePermissions(bundleDir, bundleName);
+
+    loadedBundles.push({ bundleDir, manifest: rawBundleManifest, tools, permissions });
     console.log(
       `[stavrobot-plugin-runner] Loaded bundle "${bundleName}" with ${tools.length} tool(s)`
     );
@@ -542,6 +591,7 @@ function handleListBundles(response: http.ServerResponse): void {
     name: bundle.manifest.name,
     description: bundle.manifest.description,
     editable: isEditable(bundle.manifest.name),
+    permissions: bundle.permissions,
   }));
 
   response.writeHead(200, { "Content-Type": "application/json" });
@@ -569,6 +619,7 @@ function handleGetBundle(bundleName: string, response: http.ServerResponse): voi
     name: bundle.manifest.name,
     description: bundle.manifest.description,
     editable: isEditable(bundle.manifest.name),
+    permissions: bundle.permissions,
     tools,
   };
 
@@ -644,6 +695,34 @@ async function handleRunTool(
   if (tool === null) {
     response.writeHead(404, { "Content-Type": "application/json" });
     response.end(JSON.stringify({ error: "Tool not found" }));
+    return;
+  }
+
+  // Read permissions fresh from config.json so changes take effect without a
+  // restart. Fall back to ["*"] if the value is missing or malformed.
+  const configPath = path.join(bundle.bundleDir, "config.json");
+  const rawConfig = readJsonFile(configPath);
+  const configObject =
+    typeof rawConfig === "object" && rawConfig !== null
+      ? (rawConfig as Record<string, unknown>)
+      : {};
+  const rawPermissions = configObject["permissions"];
+  const permissions: string[] =
+    Array.isArray(rawPermissions) && rawPermissions.every((item) => typeof item === "string")
+      ? (rawPermissions as string[])
+      : ["*"];
+
+  if (permissions.length === 0) {
+    console.log(`[stavrobot-plugin-runner] Tool ${bundleName}/${toolName} rejected: plugin is disabled`);
+    response.writeHead(403, { "Content-Type": "application/json" });
+    response.end(JSON.stringify({ error: "Plugin is disabled" }));
+    return;
+  }
+
+  if (!permissions.includes("*") && !permissions.includes(toolName)) {
+    console.log(`[stavrobot-plugin-runner] Tool ${bundleName}/${toolName} rejected: not in permissions list`);
+    response.writeHead(403, { "Content-Type": "application/json" });
+    response.end(JSON.stringify({ error: "Tool not permitted" }));
     return;
   }
 
@@ -1337,19 +1416,39 @@ async function handleConfigure(
     return;
   }
 
-  const manifestConfig = bundle.manifest.config;
+  // Extract `permissions` before schema validation — it's a runtime key managed
+  // by the plugin-runner, not declared in the plugin's manifest.config schema.
+  let providedPermissions: string[] | undefined;
+  if ("permissions" in providedConfig) {
+    const rawPermissions = providedConfig["permissions"];
+    if (
+      !Array.isArray(rawPermissions) ||
+      !rawPermissions.every((item) => typeof item === "string")
+    ) {
+      response.writeHead(400, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ error: "permissions must be an array of strings" }));
+      return;
+    }
+    providedPermissions = rawPermissions as string[];
+    delete providedConfig["permissions"];
+  }
 
-  if (manifestConfig === undefined) {
+  const manifestConfig = bundle.manifest.config;
+  const hasNonPermissionsKeys = Object.keys(providedConfig).length > 0;
+
+  if (manifestConfig === undefined && (hasNonPermissionsKeys || providedPermissions === undefined)) {
     response.writeHead(400, { "Content-Type": "application/json" });
     response.end(JSON.stringify({ error: "Plugin does not accept configuration." }));
     return;
   }
 
-  const unknownKeys = Object.keys(providedConfig).filter((key) => !(key in manifestConfig));
-  if (unknownKeys.length > 0) {
-    response.writeHead(400, { "Content-Type": "application/json" });
-    response.end(JSON.stringify({ error: `Unknown config keys: ${unknownKeys.join(", ")}` }));
-    return;
+  if (manifestConfig !== undefined) {
+    const unknownKeys = Object.keys(providedConfig).filter((key) => !(key in manifestConfig));
+    if (unknownKeys.length > 0) {
+      response.writeHead(400, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ error: `Unknown config keys: ${unknownKeys.join(", ")}` }));
+      return;
+    }
   }
 
   const configPath = path.join(bundle.bundleDir, "config.json");
@@ -1362,12 +1461,17 @@ async function handleConfigure(
       ? (existingConfig as Record<string, unknown>)
       : {};
 
-  const mergedConfig = { ...existingConfigObject, ...providedConfig };
+  const mergedConfig: Record<string, unknown> = { ...existingConfigObject, ...providedConfig };
+  if (providedPermissions !== undefined) {
+    mergedConfig["permissions"] = providedPermissions;
+  }
 
   const warnings: string[] = [];
-  for (const [key, meta] of Object.entries(manifestConfig)) {
-    if (meta.required && !(key in mergedConfig)) {
-      warnings.push(`Missing required config key: ${key} (${meta.description})`);
+  if (manifestConfig !== undefined) {
+    for (const [key, meta] of Object.entries(manifestConfig)) {
+      if (meta.required && !(key in mergedConfig)) {
+        warnings.push(`Missing required config key: ${key} (${meta.description})`);
+      }
     }
   }
 

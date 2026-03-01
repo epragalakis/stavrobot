@@ -109,6 +109,23 @@ Configuration values are stored in a `config.json` file at the plugin's root dir
 
 Tools can read their plugin's configuration from `../config.json` relative to their working directory. The tool's working directory is its own subdirectory, one level below the plugin root.
 
+## Permissions
+
+Each plugin has a `permissions` key in `config.json` that controls which of the plugin's tools the LLM is allowed to call. It is added automatically at install time and managed by the user via the web settings page — plugin authors do not need to declare or manage it.
+
+- `["*"]` (the default) means all tools are available.
+- `[]` means the plugin is disabled entirely.
+- An explicit list like `["tool_a", "tool_b"]` restricts the LLM to only those tools.
+
+```json
+{
+  "api_key": "your-api-key-here",
+  "permissions": ["tool_a", "tool_b"]
+}
+```
+
+Tools must not read or depend on the `permissions` key. It is reserved for the system.
+
 ## Plugin instructions
 
 The plugin manifest can include an optional `instructions` field containing setup notes, usage guidance, or other information intended for the end user.

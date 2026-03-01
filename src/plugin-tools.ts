@@ -11,6 +11,7 @@ const CLAUDE_CODE_BASE_URL = "http://coder:3002";
 
 interface BundleManifest {
   editable?: boolean;
+  permissions?: string[];
   [key: string]: unknown;
 }
 
@@ -243,6 +244,11 @@ export function createManagePluginsTool(options: { coderEnabled: boolean }): Age
             details: { result },
           };
         }
+        // Plugin permissions are set via the web UI only. The LLM must not be
+        // able to modify its own tool restrictions (user decision, see DECISIONLOG.md).
+        if (typeof parsedConfig === "object" && parsedConfig !== null) {
+          delete (parsedConfig as Record<string, unknown>)["permissions"];
+        }
         const response = await fetch(`${PLUGIN_RUNNER_BASE_URL}/configure`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -259,7 +265,35 @@ export function createManagePluginsTool(options: { coderEnabled: boolean }): Age
       if (action === "list") {
         const response = await fetch(`${PLUGIN_RUNNER_BASE_URL}/bundles`);
         const responseText = await response.text();
-        const result = formatPluginRunnerResponse(responseText);
+        let result: string;
+        try {
+          const parsed = JSON.parse(responseText) as unknown;
+          if (
+            typeof parsed === "object" &&
+            parsed !== null &&
+            "plugins" in parsed &&
+            Array.isArray((parsed as Record<string, unknown>).plugins)
+          ) {
+            const obj = parsed as Record<string, unknown>;
+            const plugins = (obj.plugins as unknown[]).filter((plugin) => {
+              if (typeof plugin !== "object" || plugin === null) return true;
+              const pluginObj = plugin as Record<string, unknown>;
+              return !(Array.isArray(pluginObj.permissions) && pluginObj.permissions.length === 0);
+            });
+            const cleaned = plugins.map((plugin) => {
+              if (typeof plugin === "object" && plugin !== null) {
+                const { permissions, ...rest } = plugin as Record<string, unknown>;
+                return rest;
+              }
+              return plugin;
+            });
+            result = formatPluginRunnerResponse(JSON.stringify({ ...obj, plugins: cleaned }));
+          } else {
+            result = formatPluginRunnerResponse(responseText);
+          }
+        } catch {
+          result = formatPluginRunnerResponse(responseText);
+        }
         return {
           content: [{ type: "text" as const, text: result }],
           details: { result },
@@ -284,7 +318,39 @@ export function createManagePluginsTool(options: { coderEnabled: boolean }): Age
           };
         }
         const responseText = await response.text();
-        const result = formatPluginRunnerResponse(responseText);
+        let result: string;
+        try {
+          const parsed = JSON.parse(responseText) as unknown;
+          if (typeof parsed === "object" && parsed !== null) {
+            const manifest = parsed as Record<string, unknown>;
+            if (Array.isArray(manifest.permissions) && manifest.permissions.length === 0) {
+              // Treat disabled plugins as not found so the LLM cannot discover them.
+              result = `Plugin '${name}' not found.`;
+            } else {
+              if (
+                Array.isArray(manifest.permissions) &&
+                !manifest.permissions.includes("*") &&
+                Array.isArray(manifest.tools)
+              ) {
+                const permittedTools = manifest.permissions as string[];
+                const filteredTools = (manifest.tools as unknown[]).filter((tool) => {
+                  if (typeof tool !== "object" || tool === null) return false;
+                  const toolObj = tool as Record<string, unknown>;
+                  return typeof toolObj.name === "string" && permittedTools.includes(toolObj.name);
+                });
+                const { permissions: _permissions, ...cleanManifest } = manifest;
+                result = formatPluginRunnerResponse(JSON.stringify({ ...cleanManifest, tools: filteredTools }));
+              } else {
+                const { permissions: _permissions, ...cleanManifest } = manifest;
+                result = formatPluginRunnerResponse(JSON.stringify(cleanManifest));
+              }
+            }
+          } else {
+            result = formatPluginRunnerResponse(responseText);
+          }
+        } catch {
+          result = formatPluginRunnerResponse(responseText);
+        }
         return {
           content: [{ type: "text" as const, text: result }],
           details: { result },
@@ -353,6 +419,45 @@ export function createRunPluginToolTool(): AgentTool {
     ): Promise<AgentToolResult<{ result: string }>> => {
       const { plugin, tool, parameters } = params as { plugin: string; tool: string; parameters: string };
       const parsedParameters = JSON.parse(parameters) as unknown;
+
+      const bundleResponse = await fetch(`${PLUGIN_RUNNER_BASE_URL}/bundles/${plugin}`);
+      if (bundleResponse.status === 404) {
+        const result = `Plugin '${plugin}' not found.`;
+        return {
+          content: [{ type: "text" as const, text: result }],
+          details: { result },
+        };
+      }
+      const bundleText = await bundleResponse.text();
+      let manifest: unknown;
+      try {
+        manifest = JSON.parse(bundleText) as unknown;
+      } catch {
+        const result = `Failed to parse plugin manifest for '${plugin}'.`;
+        return {
+          content: [{ type: "text" as const, text: result }],
+          details: { result },
+        };
+      }
+      if (isBundleManifest(manifest) && Array.isArray(manifest.permissions)) {
+        const permissions = manifest.permissions as string[];
+        if (permissions.length === 0) {
+          const result = `Plugin '${plugin}' not found.`;
+          log.debug(`[stavrobot] run_plugin_tool: rejected '${plugin}/${tool}' — plugin is disabled`);
+          return {
+            content: [{ type: "text" as const, text: result }],
+            details: { result },
+          };
+        }
+        if (!permissions.includes("*") && !permissions.includes(tool)) {
+          const result = `Tool '${tool}' not found on plugin '${plugin}'.`;
+          log.debug(`[stavrobot] run_plugin_tool: rejected '${plugin}/${tool}' — tool not in permissions list`);
+          return {
+            content: [{ type: "text" as const, text: result }],
+            details: { result },
+          };
+        }
+      }
 
       const pluginFilesDir = path.join(TEMP_ATTACHMENTS_DIR, plugin);
       // Clear stale files from previous runs.

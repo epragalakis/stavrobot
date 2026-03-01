@@ -1146,6 +1146,7 @@ interface PluginSummary {
   name: string;
   description: string;
   editable: boolean;
+  permissions: string[];
 }
 
 async function fetchPluginListSection(): Promise<string | undefined> {
@@ -1156,15 +1157,17 @@ async function fetchPluginListSection(): Promise<string | undefined> {
       return undefined;
     }
     const data = await response.json() as { plugins: PluginSummary[] };
-    const plugins = data.plugins;
-    if (plugins.length === 0) {
+    // Skip plugins with an empty permissions array — they are soft-disabled.
+    // Guard against missing permissions (e.g., during rolling deploys) by treating it as visible.
+    const visiblePlugins = data.plugins.filter((plugin) => !Array.isArray(plugin.permissions) || plugin.permissions.length > 0);
+    if (visiblePlugins.length === 0) {
       return undefined;
     }
     const lines = ["Available plugins:"];
-    for (const plugin of plugins) {
+    for (const plugin of visiblePlugins) {
       lines.push(`- ${plugin.name}: ${plugin.description}`);
     }
-    log.debug(`[stavrobot] fetchPluginListSection: injecting ${plugins.length} plugin(s) into system prompt`);
+    log.debug(`[stavrobot] fetchPluginListSection: injecting ${visiblePlugins.length} plugin(s) into system prompt`);
     return lines.join("\n");
   } catch (error) {
     log.warn("[stavrobot] fetchPluginListSection: failed to fetch plugin list:", error instanceof Error ? error.message : String(error));

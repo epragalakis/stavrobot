@@ -279,6 +279,46 @@ const PLUGINS_PAGE_HTML = `<!DOCTYPE html>
     @media (max-width: 480px) {
       .tool-description { display: block; margin-left: 0; margin-top: 2px; }
     }
+    .permissions-section {
+      margin-bottom: 12px;
+    }
+    .permissions-section h3 {
+      font-size: 12px;
+      font-weight: 600;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+    .permissions-mode {
+      margin-bottom: 8px;
+    }
+    .permissions-mode select {
+      padding: 6px 8px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      font-size: 13px;
+      background: #fff;
+      transition: all 0.15s ease;
+    }
+    .permissions-mode select:focus {
+      outline: none;
+      border-color: #d97706;
+      box-shadow: 0 0 0 3px rgba(217,119,6,0.1);
+    }
+    .permissions-tools {
+      margin-bottom: 8px;
+    }
+    .permissions-tool-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 0;
+      font-size: 13px;
+    }
+    .permissions-tool-item input[type="checkbox"] {
+      cursor: pointer;
+    }
     .config-section {
       margin-bottom: 12px;
     }
@@ -435,6 +475,46 @@ const PLUGINS_PAGE_HTML = `<!DOCTYPE html>
           </div>\`
         : "";
 
+      const permissions = detail.permissions || [];
+      let permissionsMode;
+      if (permissions.length === 1 && permissions[0] === "*") {
+        permissionsMode = "all";
+      } else if (permissions.length === 0) {
+        permissionsMode = "disabled";
+      } else {
+        permissionsMode = "selected";
+      }
+
+      const permissionsToolsHtml = tools.length > 0
+        ? \`<div class="permissions-tools" id="perm-tools-\${escapeHtml(plugin.name)}" style="\${permissionsMode !== "selected" ? "display:none;" : ""}">
+            \${tools.map(tool => \`
+              <div class="permissions-tool-item">
+                <input type="checkbox"
+                  id="perm-\${escapeHtml(plugin.name)}-\${escapeHtml(tool.name)}"
+                  data-tool="\${escapeHtml(tool.name)}"
+                  \${permissions.includes(tool.name) ? "checked" : ""}
+                />
+                <label for="perm-\${escapeHtml(plugin.name)}-\${escapeHtml(tool.name)}">\${escapeHtml(tool.name)}</label>
+              </div>
+            \`).join("")}
+          </div>\`
+        : "";
+
+      const permissionsHtml = \`<div class="permissions-section">
+          <h3>Permissions</h3>
+          <div class="permissions-mode">
+            <select id="perm-mode-\${escapeHtml(plugin.name)}" onchange="onPermissionsModeChange('\${escapeHtml(plugin.name)}')">
+              <option value="all" \${permissionsMode === "all" ? "selected" : ""}>All tools</option>
+              <option value="disabled" \${permissionsMode === "disabled" ? "selected" : ""}>Disabled</option>
+              <option value="selected" \${permissionsMode === "selected" ? "selected" : ""}>Selected tools</option>
+            </select>
+          </div>
+          \${permissionsToolsHtml}
+          <div class="actions" style="margin-top:8px;">
+            <button class="btn btn-primary" onclick="savePermissions('\${escapeHtml(plugin.name)}')">Save permissions</button>
+          </div>
+        </div>\`;
+
       const configHtml = hasConfig
         ? \`<div class="config-section">
             <h3>Configuration</h3>
@@ -474,6 +554,7 @@ const PLUGINS_PAGE_HTML = `<!DOCTYPE html>
         <div class="plugin-body">
           \${plugin.description ? \`<div class="plugin-description">\${escapeHtml(plugin.description)}</div>\` : ""}
           \${toolsHtml}
+          \${permissionsHtml}
           \${configHtml}
           <div class="actions">
             \${updateBtn}
@@ -591,6 +672,41 @@ const PLUGINS_PAGE_HTML = `<!DOCTYPE html>
         showCardMessage(name, data.message || "Config saved.", false);
       } else {
         showCardMessage(name, data.error || data.message || "Failed to save config.", true);
+      }
+    }
+
+    function onPermissionsModeChange(name) {
+      const select = document.getElementById("perm-mode-" + name);
+      const toolsEl = document.getElementById("perm-tools-" + name);
+      if (!toolsEl) return;
+      toolsEl.style.display = select.value === "selected" ? "" : "none";
+    }
+
+    async function savePermissions(name) {
+      const select = document.getElementById("perm-mode-" + name);
+      let permissions;
+      if (select.value === "all") {
+        permissions = ["*"];
+      } else if (select.value === "disabled") {
+        permissions = [];
+      } else {
+        const toolsEl = document.getElementById("perm-tools-" + name);
+        const checkboxes = toolsEl ? toolsEl.querySelectorAll("input[type='checkbox'][data-tool]") : [];
+        permissions = Array.from(checkboxes)
+          .filter(cb => cb.checked)
+          .map(cb => cb.dataset.tool);
+      }
+      showCardMessage(name, "Saving...", false);
+      const response = await fetch("/api/settings/plugins/configure", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, config: { permissions } }),
+      });
+      const data = await response.json();
+      if (response.ok) {
+        showCardMessage(name, data.message || "Permissions saved.", false);
+      } else {
+        showCardMessage(name, data.error || data.message || "Failed to save permissions.", true);
       }
     }
 

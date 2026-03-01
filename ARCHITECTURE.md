@@ -413,6 +413,7 @@ Each plugin's `config.json` is owned by its Unix user and `chmod 600`. The plugi
 - No tool gives the LLM the ability to read arbitrary files from the app container.
 - The app container has no Python or other code execution runtimes installed.
 - Plugin `config.json` files may contain secrets. No API endpoint or tool ever returns config values to the LLM. The `configure_plugin` tool only reports which keys are present or missing.
+- Plugin permissions (`permissions` key in `config.json`) control which tools the LLM can see and call. `["*"]` = all tools, `[]` = plugin disabled, explicit list = only those tools. Permissions are set via the web UI only — the main app strips `permissions` from LLM-initiated configure requests so the LLM cannot escalate its own access.
 - The Docker socket is never mounted into any container.
 
 ### Secret isolation (coder)
