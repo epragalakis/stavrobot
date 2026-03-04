@@ -385,11 +385,13 @@ def make_send_handler(
                 return
 
             if "error" in result:
-                log(f"Warning: signal-cli submitRateLimitChallenge failed: {result['error']}")
-                self.send_response(502)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps({"error": result["error"]}).encode())
+                error = result["error"]
+                if isinstance(error, dict):
+                    message = error.get("message", str(error))
+                else:
+                    message = str(error)
+                log(f"Warning: signal-cli submitRateLimitChallenge failed: {message}")
+                self.send_error_response(502, message)
                 return
 
             _rate_limit_token = None

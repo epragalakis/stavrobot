@@ -2,6 +2,8 @@
 
 This file contains instructions for AI coding agents operating in this repository.
 
+The project's GitHub URL is https://github.com/skorokithakis/stavrobot/.
+
 ## Architecture reference
 
 `ARCHITECTURE.md` is the authoritative reference for how the system works: containers,
@@ -186,6 +188,8 @@ The Python code (`client.py`) is a standalone CLI client with no third-party dep
   the user, as they might be changes the user has made.
 - After completing any task that modifies files, ALWAYS run `jj describe -m "..."` with
   an appropriate message describing the whole change. DO NOT SKIP THIS.
+- When a change fixes a GitHub issue, include `Fixes #<number>` in the commit message
+  so the issue is closed automatically when pushed.
 
 ## Coder subsystem
 
