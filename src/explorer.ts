@@ -302,8 +302,8 @@ const EXPLORER_PAGE_HTML = `<!DOCTYPE html>
     #row-modal-card {
       background: #fff;
       width: 100%;
-      max-width: 600px;
-      max-height: 80vh;
+      max-width: calc(100vw - 48px);
+      max-height: calc(100vh - 48px);
       overflow-y: auto;
       border-radius: 12px;
       padding: 16px;
@@ -575,12 +575,14 @@ const EXPLORER_PAGE_HTML = `<!DOCTYPE html>
 
       const bodyEl = document.getElementById("table-body");
       bodyEl.innerHTML = data.rows.map((row) => \`
-        <tr onclick="handleRowClick(this)">\${row.map(cell => \`<td>\${formatCell(cell)}</td>\`).join("")}</tr>
+        <tr onclick="handleRowClick(this)" ondblclick="handleRowDblClick(this)">\${row.map(cell => \`<td>\${formatCell(cell)}</td>\`).join("")}</tr>
       \`).join("");
 
       // Store row data on each tr element so the modal can access it without re-fetching.
+      // Use :scope > tr to avoid matching nested <tr> elements that marked.parse() may
+      // produce when rendering markdown tables inside cell values.
       const rows = data.rows;
-      const trEls = bodyEl.querySelectorAll("tr");
+      const trEls = bodyEl.querySelectorAll(":scope > tr");
       trEls.forEach((tr, i) => {
         tr._rowData = rows[i];
       });
@@ -605,16 +607,24 @@ const EXPLORER_PAGE_HTML = `<!DOCTYPE html>
     }
 
     function handleRowClick(row) {
-      if (clickTimer) {
+      // Cancel any pending timer from a previous click so only the latest one runs.
+      if (clickTimer !== null) {
+        clearTimeout(clickTimer);
+      }
+      // Delay opening the modal so a double-click can cancel it before it fires.
+      clickTimer = setTimeout(() => {
+        clickTimer = null;
+        openRowModal(row._rowData);
+      }, 250);
+    }
+
+    function handleRowDblClick(row) {
+      // Cancel the pending single-click modal open and toggle expanded instead.
+      if (clickTimer !== null) {
         clearTimeout(clickTimer);
         clickTimer = null;
-        row.classList.toggle("expanded");
-      } else {
-        clickTimer = setTimeout(() => {
-          clickTimer = null;
-          openRowModal(row._rowData);
-        }, 300);
       }
+      row.classList.toggle("expanded");
     }
 
     function openRowModal(rowData) {
