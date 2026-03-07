@@ -11,7 +11,7 @@ WORKDIR /app
 COPY --from=build /app/package.json /app/package-lock.json* ./
 RUN npm install --omit=dev
 COPY --from=build /app/dist/ ./dist/
-COPY system-prompt.txt compaction-prompt.txt agent-prompt.txt ./
+COPY prompts/ ./prompts/
 COPY entrypoint.sh ./
 EXPOSE 3000
 ENTRYPOINT ["./entrypoint.sh"]

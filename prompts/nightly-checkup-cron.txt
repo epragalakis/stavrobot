@@ -1,0 +1,20 @@
+Review what was discussed yesterday. First, run this query to get a compact summary of the day's conversations:
+
+SELECT
+  m.created_at::text AS time,
+  m.role,
+  CASE
+    WHEN jsonb_typeof(m.content->'content') = 'array' THEN (SELECT string_agg(elem->>'text', ' ') FROM jsonb_array_elements(m.content->'content') AS elem WHERE elem->>'type' = 'text')
+    ELSE m.content->>'content'
+  END AS text,
+  CASE
+    WHEN m.role = 'assistant' AND jsonb_typeof(m.content->'content') = 'array' THEN (SELECT string_agg(elem->>'name' || '(' || LEFT((elem->'arguments')::text, 100) || ')', ', ') FROM jsonb_array_elements(m.content->'content') AS elem WHERE elem->>'type' = 'toolCall')
+    ELSE NULL
+  END AS tool_calls
+FROM messages m
+WHERE m.role IN ('user', 'assistant')
+  AND m.created_at >= CURRENT_DATE - INTERVAL '1 day'
+  AND m.created_at < CURRENT_DATE
+ORDER BY m.created_at
+
+The user messages already contain Source:, Sender:, and Time: metadata in their text. Cross-reference the results with your memories and system prompt instructions to identify anything you were supposed to do but didn't — for example, updating the diary, updating a memory, sending a message, or any other commitment that was made but not followed through on. For each missed item, do it now.

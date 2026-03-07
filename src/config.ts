@@ -2,9 +2,9 @@ import fs from "fs";
 import TOML from "@iarna/toml";
 import { log } from "./log.js";
 
-const SYSTEM_PROMPT_PATH = "system-prompt.txt";
-const COMPACTION_PROMPT_PATH = "compaction-prompt.txt";
-const AGENT_PROMPT_PATH = "agent-prompt.txt";
+const SYSTEM_PROMPT_PATH = "prompts/system-prompt.txt";
+const COMPACTION_PROMPT_PATH = "prompts/compaction-prompt.txt";
+const AGENT_PROMPT_PATH = "prompts/agent-prompt.txt";
 
 export interface PostgresConfig {
   host: string;
@@ -37,6 +37,10 @@ export interface OwnerConfig {
   whatsapp?: string;
 }
 
+export interface ExperimentsConfig {
+  nightlyReview?: boolean;
+}
+
 export interface Config {
   provider: string;
   model: string;
@@ -53,6 +57,7 @@ export interface Config {
   telegram?: TelegramConfig;
   whatsapp?: WhatsappConfig;
   owner: OwnerConfig;
+  experiments?: ExperimentsConfig;
 }
 
 export function loadConfig(): Config {

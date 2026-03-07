@@ -174,8 +174,8 @@ Messages are processed sequentially through an in-memory queue (`queue.ts`). Onl
 1. Loads the conversation messages for the resolved agent from the database and swaps them into the agent via `replaceMessages()`. This is a cheap array swap that ensures the agent always has the right history regardless of which agent received the previous message.
 2. If a background compaction just finished for this agent, clears the compaction flag (the reload above already picks up the compacted state).
 3. Builds the system prompt, which differs by agent type:
-   - **Main agent:** base prompt (`system-prompt.txt`) + custom prompt (from config) + public hostname/timezone suffix + plugin list + memories (full content) + scratchpad titles.
-   - **Subagent:** base subagent prompt (`agent-prompt.txt`) + public hostname/timezone suffix + plugin list with tool names (filtered to the agent's `allowed_plugins`) + the agent's `system_prompt` field from the database.
+   - **Main agent:** base prompt (`prompts/system-prompt.txt`) + custom prompt (from config) + public hostname/timezone suffix + plugin list + memories (full content) + scratchpad titles.
+   - **Subagent:** base subagent prompt (`prompts/agent-prompt.txt`) + public hostname/timezone suffix + plugin list with tool names (filtered to the agent's `allowed_plugins`) + the agent's `system_prompt` field from the database.
 4. Filters the tool list for subagents. Core tools are restricted to a hard allowlist and controlled by `allowed_tools`. Plugin access is controlled separately by `allowed_plugins` — `run_plugin_tool` is implicitly included when `allowed_plugins` is non-empty. `send_agent_message` is always included. The main agent always gets the full tool set.
 5. Processes file attachments: appends a notification with the file path and metadata to the user message. Reads image attachments into base64 for vision.
 6. Formats the user message with metadata: `Time`, `Source`, `Sender`, `Text`. The sender label is `"owner"` for the owner and the interlocutor's `display_name` for external senders.

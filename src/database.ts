@@ -1,3 +1,4 @@
+import fs from "fs";
 import pg from "pg";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import { loadPostgresConfig } from "./config.js";
@@ -581,6 +582,54 @@ export async function initializeCronSchema(pool: pg.Pool): Promise<void> {
       )
     )
   `);
+}
+
+const NIGHTLY_CHECKUP_CRON_PATH = "prompts/nightly-checkup-cron.txt";
+const NIGHTLY_REVIEW_MARKER = "[nightly-review]";
+const NIGHTLY_REVIEW_CRON_EXPRESSION = "0 3 * * *";
+
+export async function seedNightlyReview(pool: pg.Pool, enabled: boolean): Promise<void> {
+  if (!enabled) {
+    log.info("[stavrobot] Nightly review experiment is disabled, skipping seed.");
+    return;
+  }
+
+  let promptText: string;
+  try {
+    promptText = fs.readFileSync(NIGHTLY_CHECKUP_CRON_PATH, "utf-8").trimEnd();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      log.warn(`[stavrobot] ${NIGHTLY_CHECKUP_CRON_PATH} not found, skipping nightly review seed.`);
+      return;
+    }
+    throw error;
+  }
+
+  const note = `${NIGHTLY_REVIEW_MARKER} ${promptText}`;
+
+  const existing = await pool.query<{ id: number; note: string }>(
+    "SELECT id, note FROM cron_entries WHERE note LIKE $1",
+    [`${NIGHTLY_REVIEW_MARKER}%`],
+  );
+
+  if (existing.rows.length === 0) {
+    await pool.query(
+      "INSERT INTO cron_entries (cron_expression, note) VALUES ($1, $2)",
+      [NIGHTLY_REVIEW_CRON_EXPRESSION, note],
+    );
+    log.info("[stavrobot] Nightly review cron entry created.");
+  } else {
+    const row = existing.rows[0];
+    if (row.note !== note) {
+      await pool.query(
+        "UPDATE cron_entries SET note = $1 WHERE id = $2",
+        [note, row.id],
+      );
+      log.info("[stavrobot] Nightly review cron entry updated.");
+    } else {
+      log.info("[stavrobot] Nightly review cron entry is up to date.");
+    }
+  }
 }
 
 export interface CronEntry {
