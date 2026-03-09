@@ -224,9 +224,8 @@ export async function handleTelegramWebhookRequest(
         reason = "wrong_secret";
       }
       log.info(`[stavrobot] Telegram webhook rejected: ${reason}`);
-      const expectedFingerprint = webhookSecret.slice(0, 8);
       const providedFingerprint = typeof providedSecret === "string" ? providedSecret.slice(0, 8) : String(providedSecret);
-      log.debug(`[stavrobot] [debug] Secret mismatch: expected=${expectedFingerprint}..., provided=${providedFingerprint}...`);
+      log.debug(`[stavrobot] [debug] Secret mismatch: reason=${reason}, provided=${providedFingerprint}...`);
       log.debug(`[stavrobot] [debug] Request metadata: remoteAddress=${request.socket?.remoteAddress}, x-forwarded-for=${request.headers["x-forwarded-for"]}, user-agent=${request.headers["user-agent"]}, content-length=${request.headers["content-length"]}`);
       response.writeHead(403, { "Content-Type": "application/json" });
       response.end(JSON.stringify({ error: "Forbidden" }));

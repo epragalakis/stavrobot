@@ -13,6 +13,19 @@ const INSTRUCTIONS_MAX_LENGTH = 5000;
 // Loaded once at startup. Undefined if the config file is missing or has no password field.
 let appPassword: string | undefined;
 
+// Return true if the URL uses a scheme that git clone accepts safely. The
+// ext:: remote helper protocol can execute arbitrary commands, so we allowlist
+// only the schemes that are safe for user-supplied URLs.
+export function isGitUrlSchemeAllowed(url: string): boolean {
+  return (
+    url.startsWith("https://") ||
+    url.startsWith("http://") ||
+    url.startsWith("git://") ||
+    url.startsWith("ssh://") ||
+    url.startsWith("git@")
+  );
+}
+
 // Maximum length of a Unix username on Linux is 32 characters.
 const MAX_USERNAME_LENGTH = 32;
 
@@ -1127,6 +1140,12 @@ async function handleInstall(
   }
 
   const url = (parsed as Record<string, unknown>)["url"] as string;
+
+  if (!isGitUrlSchemeAllowed(url)) {
+    response.writeHead(400, { "Content-Type": "application/json" });
+    response.end(JSON.stringify({ error: "Invalid URL scheme. Only https, http, git, and ssh URLs are supported." }));
+    return;
+  }
 
   // Use a unique temp directory per install to avoid collisions. The directory
   // must be on the same filesystem as PLUGINS_DIR so that renameSync works
